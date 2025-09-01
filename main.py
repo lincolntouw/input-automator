@@ -19,6 +19,11 @@ import threading
 import time
 import pyautogui
 import keyboard
+import ctypes   
+
+import inputs  
+from input_codes import readable_key_list as KEY_LIST
+KEY_LIST = KEY_LIST()      
 
 # ================== Globals ==================
 
@@ -57,6 +62,48 @@ def increment_stat(name, value=1):
     update_stat(name, stats[name] + value)
     
 # ================== Actions ==================
+def autoclick(ui, start_value):
+    interval = float(ui["interval_entry"].get())
+    max_iterations = int(ui["max_iterations_entry"].get())
+    button = ui["button_choice"].get()
+    location_mode = ui["click_mode_choice"].get()
+
+    x = int(ui["click_x"].get())
+    y = int(ui["click_y"].get())    
+
+    while clicking:
+        if location_mode == "cursor position":
+            inputs.mouse_click(button=button)    
+        elif location_mode == "fixed position":
+            inputs.mouse_click(button=button, x=x, y=y)     
+            
+        increment_stat("Clicks")     
+        if max_iterations and stats["Clicks"] - start_value >= max_iterations: stop_action(ui)
+        time.sleep(interval)
+
+def autokeypress(ui, start_value):
+    interval = float(ui["interval_entry"].get())
+    max_iterations = int(ui["max_iterations_entry"].get())
+    modifiers = []
+    if ui["shift_modifier"].get(): modifiers.append("shift")
+    if ui["control_modifier"].get(): modifiers.append("ctrl")
+    if ui["alt_modifier"].get(): modifiers.append("alt")
+    key = ui["key_entry"].get().strip()
+    if key: modifiers.append(key)
+    keys = "+".join(modifiers)
+
+    while clicking:
+        inputs.key_press(key)   
+         
+        increment_stat("Keys Pressed")
+        if max_iterations and stats["Keys Pressed"] - start_value >= max_iterations: stop_action(ui)
+        time.sleep(interval)
+
+actions = {
+    "AutoClick": autoclick,
+    "AutoKeyPress": autokeypress,   
+}
+
 def start_action(ui):
     global clicking, click_thread, start_time 
     if clicking: return
@@ -73,51 +120,10 @@ def start_action(ui):
         if clicking: root.after(50, update_time)
     update_time()
 
-    def action_loop():
-        interval = float(ui["interval_entry"].get())
-        max_iterations = int(ui["max_iterations_entry"].get())
+    stat_name = "Clicks" if current_mode == "AutoClick" else "Keys Pressed"
+    start_value = stats[stat_name]
 
-        stat_name = "Clicks" if current_mode == "AutoClick" else "Keys Pressed"
-        start_value = stats[stat_name]
-
-        if current_mode == "AutoClick":
-            button = ui["button_choice"].get()
-            location_mode = ui["click_mode_choice"].get()
-
-            while clicking:
-                if location_mode == "cursor position":
-                    pyautogui.click(button=button)
-                elif location_mode == "fixed position":
-                    pyautogui.click(
-                        button=button,
-                        x=int(ui["click_x"].get()),
-                        y=int(ui["click_y"].get())
-                    )
-
-                increment_stat("Clicks")     
-                if max_iterations and stats["Clicks"] - start_value >= max_iterations:
-                    stop_action(ui)
-
-                time.sleep(interval)
-        elif current_mode == "AutoKeyPress":    
-            modifiers = []
-            if ui["shift_modifier"].get(): modifiers.append("shift")
-            if ui["control_modifier"].get(): modifiers.append("ctrl")
-            if ui["alt_modifier"].get(): modifiers.append("alt")
-            key = ui["key_entry"].get().strip()
-            if key: modifiers.append(key)
-            keys = "+".join(modifiers)
-
-            while clicking:
-                keyboard.press_and_release(keys)
-                
-                increment_stat("Keys Pressed")
-                if max_iterations and stats["Keys Pressed"] - start_value >= max_iterations:
-                    stop_action(ui)
-
-                time.sleep(interval)
-
-    click_thread = threading.Thread(target=action_loop, daemon=True)
+    click_thread = threading.Thread(target=actions[current_mode], args=(ui, start_value,), daemon=True)
     click_thread.start()
 
 def stop_action(ui):
@@ -138,7 +144,7 @@ def setup_hotkey(ui):
     if hotkey:
         keyboard.remove_hotkey(hotkey)
     hotkey = keyboard.add_hotkey(current_hotkey, toggle)
-    ui["hotkey_label"].config(text=f"Toggle Hotkey: {current_hotkey}")      
+    ui["hotkey_label"].config(text=f"Toggle Hotkey: {current_hotkey.upper()}")        
 
 def change_hotkey(ui):
     global current_hotkey
@@ -147,6 +153,43 @@ def change_hotkey(ui):
         current_hotkey = new_key
         setup_hotkey(ui)
 
+# ================== Hotkey Selector ==================
+def pick_hotkey(ui):        
+    open = True
+    chosen = None 
+    def close():
+        global open
+        open = False
+        picker.destroy()
+    def pick():
+        global current_hotkey
+        if chosen != None: 
+            current_hotkey = chosen
+            ui["hotkey_entry"].set(current_hotkey)  
+            change_hotkey(ui)       
+        close()     
+
+    picker = tk.Toplevel(root)     
+    picker.title("Hotkey Picker")  
+    picker.geometry("300x148")
+    picker.grab_set()  
+    
+    label = tk.Label(picker, text="Press a key", font=CUSTOM_FONT)           
+    label.pack()            
+    preview = tk.Label(picker, text=current_hotkey.upper(), font=(CUSTOM_FONT[0], CUSTOM_FONT[1] * 2))    
+    preview.pack()   
+    
+    pick_button = tk.Button(picker, text="Choose", command=pick)       
+    pick_button.pack(pady=5)
+    cancel_button = tk.Button(picker, text="Cancel", command=close)
+    cancel_button.pack(pady=5)                  
+
+    while open:
+        try: chosen = keyboard.read_key(suppress=True)        
+        except: break
+        preview.config(text=chosen.upper())     
+    return chosen
+ 
 # ================== Position Selector ==================
 def pick_click_position(ui):
     from pynput import mouse
@@ -161,10 +204,11 @@ def pick_click_position(ui):
 
     def update_position():
         x, y = pyautogui.position()
-        picker.geometry(f"+{x+15}+{y+15}")
+        try: picker.geometry(f"+{x+15}+{y+15}")
+        except: pass    
         label.config(text=f"Left-click to pick, press Esc to cancel\n(X: {x}, Y: {y})")
         if picker.winfo_exists():
-            picker.after(30, update_position)
+            picker.after(2, update_position)
 
     def on_click(x, y, button, pressed):
         if pressed:
@@ -174,7 +218,7 @@ def pick_click_position(ui):
             ui["click_y"].delete(0, tk.END)
             ui["click_y"].insert(0, str(y))
             stop()
-
+    
     def cancel_pick(): stop()
     def stop():
         try: listener.stop()
@@ -325,11 +369,15 @@ def main():
     ui["hotkey_label"].grid(row=1, column=0, columnspan=2, pady=5, sticky="w")
 
     # Hotkey changer
-    tk.Label(hotkey_frame, text="Set new hotkey:", font=CUSTOM_FONT).grid(row=2, column=0, sticky="w")
-    ui["hotkey_entry"] = tk.Entry(hotkey_frame, width=10, font=CUSTOM_FONT)
-    ui["hotkey_entry"].grid(row=2, column=1, padx=5, sticky="w")
-    tk.Button(hotkey_frame, text="Change", font=CUSTOM_FONT, command=lambda:change_hotkey(ui)).grid(row=2, column=2, columnspan=2, pady=5)
-    ui["hotkey_entry"].insert(0, current_hotkey)
+    hotkey_subframe = tk.Frame(hotkey_frame)
+    hotkey_subframe.grid(row=2, column=0, sticky='w')   
+    tk.Label(hotkey_subframe, text="Set new hotkey:", font=CUSTOM_FONT).grid(row=0, column=0, sticky="w")
+    ui["hotkey_entry"] = tk.StringVar(value=current_hotkey)      
+    tk.Button(hotkey_subframe, 
+              text="Pick",
+              font=CUSTOM_FONT, 
+              command=lambda: threading.Thread(target=pick_hotkey, daemon=True, args=(ui,)).start()
+    ).grid(row=0, column=1, pady=5, sticky='w')     
 
     # ------------------ Statistics ------------------      
     stats_frame = tk.LabelFrame(root, text="Statistics", padx=10, pady=10, font=CUSTOM_FONT)

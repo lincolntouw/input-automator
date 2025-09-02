@@ -62,6 +62,7 @@ def increment_stat(name, value=1):
     update_stat(name, stats[name] + value)
     
 # ================== Actions ==================
+   
 def autoclick(ui, start_value):
     interval = float(ui["interval_entry"].get())
     max_iterations = int(ui["max_iterations_entry"].get())
@@ -93,7 +94,7 @@ def autokeypress(ui, start_value):
     keys = "+".join(modifiers)
 
     while clicking:
-        inputs.key_press(key)   
+        keyboard.press_and_release(keys)   
          
         increment_stat("Keys Pressed")
         if max_iterations and stats["Keys Pressed"] - start_value >= max_iterations: stop_action(ui)
